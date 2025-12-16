@@ -78,7 +78,7 @@ Next attempts worked out better to create consistent and large-scale datasets by
 
 Trying to run the fine-tuning script in Google Colab resulted in unnecessary wait times and loss of progress. Switching to run fine-tuning locally resulted in shorter training times and also fixed the issue with Colab of unnecessary restarts and runtime disconnects. Adding Unsloth to the fine-tuning script reduced time to train a single iteration from around 4 hours down to around 2.5 hours using a Nvidia RTX 3080 Graphics card. With more complex datasets and larger models, Azure AI Foundry is suggested for fine-tuning. 
 
-Resulting fine-tunes are easy to upload and use through Hugging Face, and using `llama.cpp`, models can be easily translated to be used by Ollama.   
+Resulting fine-tunes are easy to upload and use through Hugging Face, and using `llama.cpp`, models can be easily translated to be used by Ollama. Future improvements should include testing other models with longer context limits and optimized handling of structured instructions, like `LLaMA 3 / 7B–13B`,  `Falcon 7B / 40B`, or `Qwen 7B / Gemma 7B`. 
 
 ### 3. Inference
 
