@@ -1,4 +1,4 @@
-# AI Pentest Fine-Tune Training Pipeline
+# AI Pentest Report Fine-Tuning Pipeline
 
 This project shows how to create a dataset of AI pentest reports and fine-tune a model (Phi-3.5-mini-instruct) using Unsloth.
 
