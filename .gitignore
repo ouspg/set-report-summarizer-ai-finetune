@@ -6,3 +6,6 @@ venv/
 .venv/
 notebooks/unsloth_compiled_cache
 unsloth_compiled_cache
+notebooks/lora_model
+notebooks/outputs
+unsloth_compiled_cache
