@@ -9,3 +9,5 @@ unsloth_compiled_cache
 notebooks/lora_model
 notebooks/outputs
 unsloth_compiled_cache
+data/generated_runs
+data/generated_runs_old
