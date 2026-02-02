@@ -14,4 +14,5 @@ data/generated_runs_old
 models/
 nraesalmi/
 wsl_venv/
-data/generated_runs2
+data/html_outputs/
+final_eval_pipeline/__pycache__

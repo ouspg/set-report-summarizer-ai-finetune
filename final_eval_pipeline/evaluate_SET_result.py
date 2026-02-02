@@ -3,60 +3,26 @@ from pathlib import Path
 from typing import Union, List, Dict
 
 from set_descriptions import SET_DESCRIPTIONS, DETECTOR_POOL
+from format_html import create_html_file
 
-from inference import run
+def load_json_safely(path):
+    """
+    Load a JSON file safely. Works with multi-line JSON.
+    Returns the parsed dictionary, or None if failed.
+    """
+    path = Path(path)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"⚠️ Failed to parse JSON: {e}")
+        return None
 
-"""
-Functions to evaluate and summarize SET results from JSON reports.
-
-Uses the following format for input JSON report:
-
-{
-'run_id', 
-'model_type', 
-'model_name', 
-'run_length', 
-'SETs': [{
-    'SET_classname',
-    'description',
-    'total_runs',
-    'evaluation_results': [{
-        'detector',
-        'passed_count',
-        'total_count',
-        'pass_percentage',
-        'pass_percentage_value',
-        'outcome': 'Vulnerable'/'Resisted',
-        'detector_remediation'
-        },
-    'SET_remediation'
-    }],
-    'recommended_remediations': []
-}
-"""
-
-def load_jsonl_safely(path: Path):
-    entries = []
-    with path.open("r", encoding="utf-8", errors="replace") as f:
-        for lineno, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entries.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                print(f"⚠️ Skipping invalid JSON on line {lineno}: {e}")
-                continue
-    return entries
 
 def generate_report_string(report):
     """
     Convert a single JSON report into a human-readable string.
     """
     SETs_section = ""
-
-    less_than_100_runs = 'The stochasticity of artificial intelligence models leaves variance in their outputs, so a larger number of runs gives a better picture of the test results.'
-    more_than_100_runs = 'These test results give a good statistical picture of the target\'s sensitivity to the attack in question.'
 
     for SET in report.get("SETs", []):
         SET_name = SET.get("SET_classname", "unknown")
@@ -74,17 +40,14 @@ def generate_report_string(report):
             outcome = ev.get("outcome", "unknown")
 
             line = f"        - {detector}: Passed {passed}/{total} tests ({percent}) — {outcome}"
-            if outcome == "Vulnerable":
-                remediation = DETECTOR_POOL.get(detector, "Validation/Monitoring")
-                line += f"\n            Recommended Remediation: {remediation}"
             evaluation_lines.append(line)
 
         evaluation_str = "\n".join(evaluation_lines)
 
         SET_header = f"{SET_name}:\n    Description: {description}\n"
-        SET_header += f"    Total runs: {total_runs}. {less_than_100_runs if total_runs != 'unknown' and int(total_runs) < 100 else more_than_100_runs if total_runs != 'unknown' else ''}\n"
-        SET_header += f"    Remediation: {SET.get('SET_remediation', 'No remediation provided.')}\n\n"
+        SET_header += f"    Total runs: {total_runs}.\n"
         SET_header += f"    Evaluation:\n{evaluation_str}\n"
+        SET_header += f"    Recommended Remediation: {SET.get('SET_remediation', 'No remediation provided.')}\n\n"
         SETs_section += SET_header
 
     output_text = f"""Overview:
@@ -95,16 +58,14 @@ The runtime for this test was {report.get("run_length", "unknown")}.
 
     return output_text
 
-
 def summarize_vuln_SETs(json_input: Union[str, dict, Path]) -> List[Dict]:
     """
     Extract only vulnerable SETs from a JSON report.
     Returns a list of SETs with:
       - description
       - overall_pass_percentage (for vulnerable detectors only)
-    SETs where all detectors are 'Resisted' are skipped.
     """
-    # Load input
+    
     if isinstance(json_input, Path) or (isinstance(json_input, str) and Path(json_input).exists()):
         try:
             report = json.loads(Path(json_input).read_text(encoding="utf-8"))
@@ -127,8 +88,6 @@ def summarize_vuln_SETs(json_input: Union[str, dict, Path]) -> List[Dict]:
 
     for SET in report.get("SETs", []):
         description = SET.get("description", "No description available.")
-
-        # Keep only vulnerable detectors
         vulnerable_results = [
             ev for ev in SET.get("evaluation_results", [])
             if ev.get("outcome", "").lower() != "resisted"
@@ -142,17 +101,17 @@ def summarize_vuln_SETs(json_input: Union[str, dict, Path]) -> List[Dict]:
             summary.append({
                 "SET_name": SET.get("SET_classname", "unknown"),
                 "description": description,
+                "total_runs": SET.get("total_runs", "unknown"),
                 "outcome": "Vulnerable",
                 "overall_pass_percentage": overall_pass_rate
             })
-    
+
     remediations = report.get("recommended_remediations", [])
     if remediations:
         summary.append({
             "recommended_remediations": remediations
         })
 
-    # If no vulnerabilities were found, return a single note
     if not summary:
         summary.append({
             "note": "No vulnerabilities were found in the evaluated SETs."
@@ -160,34 +119,88 @@ def summarize_vuln_SETs(json_input: Union[str, dict, Path]) -> List[Dict]:
 
     return summary
 
-def add_notes(summary: str) -> str:
-    # Add any additional notes or disclaimers to the summary
-    # add variability of results due to AI stochasticity
-    # add recommendation for larger number of runs
-    # add disclaimer about false positives/negatives
-    # add recommendation for human review
-    return summary + "\n\n### Note: The results of these tests may vary due to the inherent stochasticity of AI models. It is recommended to conduct a larger number of runs for a more comprehensive assessment. Additionally, while automated tests provide valuable insights, they may produce false positives or negatives; therefore, human review is advised for critical evaluations."
+def add_notes(report: dict, summary: List[Dict], text: str) -> str:
+    """
+    Add dynamic notes about stochasticity and general disclaimers.
+    summary: list of vulnerable SET dicts
+    """
+    low_run_sets = []
+    
+    for s in summary:
+        if "SET_name" not in s:
+            continue
+        
+        total_runs = s.get("total_runs", "unknown")
+        try:
+            total_runs_int = int(total_runs)
+        except (ValueError, TypeError):
+            continue
+
+        if total_runs_int < 100:
+            low_run_sets.append(s.get("SET_name", "Unknown SET"))
+
+    note_lines = ["### Notes:"]
+
+    # Stochasticity / Run count
+    if low_run_sets:
+        note_lines.append(
+            f"- The following SETs had fewer than 100 runs and results may vary due to AI stochasticity: "
+            + ", ".join(low_run_sets) + "."
+        )
+        note_lines.append("- It is recommended to conduct a larger number of runs for a more comprehensive assessment.")
+    else:
+        note_lines.append("- All SETs had over 100 runs, reducing AI stochasticity and generating more reliable results.")
+
+    # Human review
+    note_lines.append("- Automated tests may produce false positives or negatives; human review is advised for critical evaluations.")
+
+    return text + "\n\n" + "\n".join(note_lines)
 
 
-def create_html_file(content: str, filename: str = "output.html") -> None:
+def run_evaluation_pipeline(json_report_path: str, output_html_dir: str) -> None:
     """
-    Creates an HTML file containing the given string.
+    Full pipeline: load JSON report, generate summaries, run AI inference if needed, and create HTML.
+    """
+    report = load_json_safely(json_report_path)
+    if report is None:
+        print("No valid JSON report loaded. Exiting.")
+        return
 
-    :param content: The HTML content to write into the file.
-    :param filename: The name of the HTML file to create.
-    """
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(content)
-
-def run_evaluation_pipeline(json_report_path: Path, output_html_path: Path) -> None:
-    """
-    Full pipeline to load a JSON report, generate a summary, and save it as an HTML file.
-    """
-    report = load_jsonl_safely(json_report_path)[0]  # Assuming single report per file
     report_string = generate_report_string(report)
     summary = summarize_vuln_SETs(report)
     summary_str = json.dumps(summary, indent=2)
-    ai_inference = run(summary_str)
+
+    try:
+        from inference import run
+
+        if "note" in summary[0]:
+            ai_inference = summary[0]["note"]
+        else:
+            ai_inference = run(summary_str)
+
+    except Exception as e:
+        # Capture the error type and message
+        error_type = type(e).__name__
+        error_msg = str(e)
+        
+        # Provide a clear explanation inside the AI output
+        ai_inference = (
+            "## Issue Summary:\n"
+            "AI summarization failed due to an internal error.\n\n"
+            f"Error Type: {error_type}\n"
+            f"Error Message: {error_msg}\n"
+            "Please check the model, inputs, or device configuration and retry."
+        )
+
+
     final_summary = report_string + "\n\n" + ai_inference
-    final_summary_with_notes = add_notes(final_summary)
-    create_html_file(final_summary_with_notes, output_html_path)
+    final_summary_with_notes = add_notes(report, summary, final_summary)
+
+    input_path = Path(json_report_path)
+    output_file = Path(output_html_dir) / f"{input_path.stem}_report.html"
+
+    create_html_file(final_summary_with_notes, output_file)
+
+    print(f"[INFO] Generated report {output_file} to {output_html_dir}")
+
+run_evaluation_pipeline("C:/Users/nikke/GitHub/ai-pentest-report-finetuning-pipeline/data/generated_runs/4a6d6320-65b5-4c06-857a-52be2c73b3ad.generated.json", "C:/Users/nikke/GitHub/ai-pentest-report-finetuning-pipeline/data/html_outputs/")

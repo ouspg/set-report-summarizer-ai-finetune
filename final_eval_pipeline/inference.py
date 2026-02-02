@@ -1,53 +1,48 @@
 # Report summary imports
 from pathlib import Path
 import json
-from datetime import datetime
-import csv
-import os
-
-# Model inference imports
+import torch
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
-import torch
-import pandas as pd
-from transformers import AutoTokenizer
 
 from set_descriptions import EXAMPLES
 
-def run_inference(ai_input: str) -> str:
+MODEL_NAME = "nraesalmi/SET_eval_gemma-3_finetuned" # https://huggingface.co/nraesalmi/SET_eval_gemma-3_finetuned
 
-    MODEL_NAME = "unsloth/Llama-3.2-3B-Instruct"
+def run_inference(ai_input: str) -> str:
+    """
+    Run AI inference using Gemma-3 chat template for SET summaries.
+    """
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load model + tokenizer via Unsloth
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = MODEL_NAME,
-        max_seq_length = 4096,     # adjust if needed
-        dtype = None,              # auto
-        load_in_4bit = False,      # set True if VRAM constrained
+        model_name=MODEL_NAME,
+        max_seq_length=4096,
+        dtype=None,
+        load_in_4bit=False
     )
+
     # Enable inference optimizations
     FastLanguageModel.for_inference(model)
 
-    # Set up tokenizer template
+    # Initialize tokenizer with Gemma-3 template
     tokenizer = get_chat_template(
         tokenizer,
-        chat_template="llama-3.1",
-        mapping={"role": "from", "content": "value", "user": "human", "assistant": "gpt"},
+        chat_template="gemma-3",
     )
 
-    # Enable faster inference
-    FastLanguageModel.for_inference(model)
-
+    # Build the prompt
     messages = [
         {
             "role": "user",
-            "content": f"""
-You are an AI penetration test summarizing assistant. Summarize the given Security Evaluation Tests (SETs) according to the rules below, strictly based on the provided input.
+            "content": f"""You are an AI penetration test summarizing assistant. Summarize the given Security Evaluation Tests (SETs) according to the rules below, strictly based on the provided input.
 
 1. Produce exactly two sentences total.
-2. Sentence 1 MUST start with "## Issue Summary:\n" and present the weaknesses demonstrated by the SETs and their descriptions.
+2. Sentence 1 MUST start with "\n## Issue Summary:\n" and present the weaknesses demonstrated by the SETs and their descriptions.
    - Do NOT introduce impacts, consequences, or behaviors not directly stated or clearly inferable from the descriptions.
-3. Sentence 2 must start with "\n### Remediation Recommendation:\n" and include all recommended_remediations present in the input, expressed together as a single coherent sentence.
+3. Sentence 2 MUST start with "\n### Recommended Remediations:\n" and include all recommended_remediations present in the input.
    - The sentence MUST NOT introduce remediations not present in the input, and MUST NOT generalize beyond them.
 4. Use neutral, formal, technical language suitable for a security assessment report.
 5. Do NOT include explanations, meta-commentary, or generation details.
@@ -56,64 +51,69 @@ You are an AI penetration test summarizing assistant. Summarize the given Securi
 
 STRICT OUTPUT TEMPLATE (MANDATORY):
 - Sentence 1 MUST start with "## Issue Summary:".
-- Sentence 2 MUST start with "### Remediation Recommendation:".
+- Sentence 2 MUST start with "### Recommended Remediations:".
 - The output MUST contain exactly two sentences and no additional text.
 
+Here are two example Result-Summary pairs 
+Result 1:
+{EXAMPLES[2]["input"]}
+Summary 1:
+{EXAMPLES[2]["output"]}
 
-Example inputs and summaries:
+Result 2:
+{EXAMPLES[3]["input"]}
+Summary 2:
+{EXAMPLES[3]["output"]}
 
-Correct Input 1:
-{EXAMPLES[0]["input"]}
-Correct Summary 1:
-{EXAMPLES[0]["output"]}
-
-Correct Input 2:
-{EXAMPLES[1]["input"]}
-Correct Summary 2:
-{EXAMPLES[1]["output"]}
-
-
-Penetration test summary JSON:\n{ai_input}"""
+Here is the penetration test result to summarize:
+{ai_input}"""
         }
     ]
 
-
+    # Tokenize input using Gemma-3 template
     inputs = tokenizer.apply_chat_template(
         messages,
+        add_generation_prompt=True,
         tokenize=True,
-        add_generation_prompt=False,
         return_tensors="pt",
+        return_dict=True,
     )
 
-    if isinstance(inputs, dict):
-        input_ids = inputs["input_ids"].to("cuda")
-        attention_mask = inputs["attention_mask"].to("cuda")
-    else:
-        input_ids = inputs.to("cuda")
-        attention_mask = None
+    # Move inputs to the available device
+    for k in inputs:
+        inputs[k] = inputs[k].to(device)
 
-
+    # Generate model output
     with torch.no_grad():
         output_ids = model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            max_new_tokens=400,
-            do_sample=False,
-            temperature=0.0,
-            top_p=1.0,
+            **inputs,
+            max_new_tokens=128,
+            do_sample=True,
+            temperature=1.0,
+            top_p=0.95,
+            top_k=64,
             repetition_penalty=1.2,
-            use_cache=True,
+            use_cache=True
         )
 
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    # Decode the output
+    decoded_output = tokenizer.batch_decode(output_ids, skip_special_tokens=False)[0]
 
+    # Extract only the assistant/model content
+    # Gemma-3 format: <start_of_turn>model\nCONTENT<end_of_turn>
+    if "<start_of_turn>model\n" in decoded_output:
+        result = decoded_output.split("<start_of_turn>model\n")[1]
+        result = result.split("<end_of_turn>")[0]
+    else:
+        result = decoded_output
+
+    return result.strip()
 
 def run(ai_input: str) -> str:
+    """
+    Wrapper to handle the 'no vulnerabilities' case.
+    """
     if "No vulnerabilities were found in the evaluated SETs." in ai_input:
-        remediation_note = "## Issue Summary:\nNo vulnerabilities were found in the evaluated SETs."
+        return "## Issue Summary:\nNo vulnerabilities were found in the evaluated SETs."
     else:
-        remediation_note = run_inference(ai_input)
-        remediation_note = remediation_note.split("assistant\n")[1]
-        remediation_note = remediation_note.split("<|eot_id|>")[0]
-
-    return remediation_note
+        return run_inference(ai_input)
