@@ -5,6 +5,7 @@ from typing import Union, List, Dict
 from set_descriptions import SET_DESCRIPTIONS, DETECTOR_POOL
 from format_html import create_html_file
 
+
 def load_json_safely(path):
     """
     Load a JSON file safely. Works with multi-line JSON.
@@ -161,6 +162,15 @@ def run_evaluation_pipeline(json_report_path: str, output_html_dir: str) -> None
     """
     Full pipeline: load JSON report, generate summaries, run AI inference if needed, and create HTML.
     """
+
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    PROJECT_ROOT = SCRIPT_DIR.parent  # ai-pentest-report-finetuning-pipeline
+
+    json_report_path = (PROJECT_ROOT / json_report_path).resolve()
+    if not json_report_path.exists():
+        print(f"[ERROR] JSON report not found: {json_report_path}")
+        return
+    
     report = load_json_safely(json_report_path)
     if report is None:
         print("No valid JSON report loaded. Exiting.")
@@ -173,10 +183,12 @@ def run_evaluation_pipeline(json_report_path: str, output_html_dir: str) -> None
     try:
         from inference import run
 
-        if "note" in summary[0]:
-            ai_inference = summary[0]["note"]
+        result = run(summary_str)
+        if isinstance(result, dict):
+            ai_inference = result.get("output") or next(iter(result.values()))
         else:
-            ai_inference = run(summary_str)
+            ai_inference = result
+
 
     except Exception as e:
         # Capture the error type and message
@@ -196,11 +208,17 @@ def run_evaluation_pipeline(json_report_path: str, output_html_dir: str) -> None
     final_summary = report_string + "\n\n" + ai_inference
     final_summary_with_notes = add_notes(report, summary, final_summary)
 
+    output_html_dir = (PROJECT_ROOT / output_html_dir).resolve()
+    output_html_dir.mkdir(parents=True, exist_ok=True)  # ensure directory exists
+
     input_path = Path(json_report_path)
-    output_file = Path(output_html_dir) / f"{input_path.stem}_report.html"
+    output_file = output_html_dir / f"{input_path.stem}_report.html"
 
     create_html_file(final_summary_with_notes, output_file)
 
-    print(f"[INFO] Generated report {output_file} to {output_html_dir}")
+    print(f"[INFO] Generated report: {output_file}")
 
-run_evaluation_pipeline("C:/Users/nikke/GitHub/ai-pentest-report-finetuning-pipeline/data/generated_runs/4a6d6320-65b5-4c06-857a-52be2c73b3ad.generated.json", "C:/Users/nikke/GitHub/ai-pentest-report-finetuning-pipeline/data/html_outputs/")
+run_evaluation_pipeline(
+    "data/generated_runs/00a1835b-0db8-4fdf-99d9-ef940d20805d.generated.json",
+    "data/html_outputs/"
+)

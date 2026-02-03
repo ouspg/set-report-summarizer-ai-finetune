@@ -7,7 +7,8 @@ from unsloth.chat_templates import get_chat_template
 
 from set_descriptions import EXAMPLES
 
-MODEL_NAME = "nraesalmi/SET_eval_gemma-3_finetuned" # https://huggingface.co/nraesalmi/SET_eval_gemma-3_finetuned
+MODEL_NAME = "nraesalmi/SET_eval_gemma-3_adapters" # https://huggingface.co/nraesalmi/SET_eval_gemma-3_finetuned
+BASE_MODEL = "unsloth/gemma-3-4b-it"
 
 def run_inference(ai_input: str) -> str:
     """
@@ -18,11 +19,14 @@ def run_inference(ai_input: str) -> str:
 
     # Load model + tokenizer via Unsloth
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=MODEL_NAME,
-        max_seq_length=4096,
-        dtype=None,
-        load_in_4bit=False
+        model_name = BASE_MODEL,
+        max_seq_length = 2048,     # adjust if needed 8192
+        dtype = None,              # auto
+        load_in_4bit = True,      # set True if VRAM constrained
     )
+
+    # Add finetuned adapter on top
+    model.load_adapter(MODEL_NAME)
 
     # Enable inference optimizations
     FastLanguageModel.for_inference(model)
@@ -37,7 +41,10 @@ def run_inference(ai_input: str) -> str:
     messages = [
         {
             "role": "user",
-            "content": f"""You are an AI penetration test summarizing assistant. Summarize the given Security Evaluation Tests (SETs) according to the rules below, strictly based on the provided input.
+            "content": [
+            {
+                "type": "text",
+                "text": f"""You are an AI penetration test summarizing assistant. Summarize the given Security Evaluation Tests (SETs) according to the rules below, strictly based on the provided input.
 
 1. Produce exactly two sentences total.
 2. Sentence 1 MUST start with "\n## Issue Summary:\n" and present the weaknesses demonstrated by the SETs and their descriptions.
@@ -58,17 +65,15 @@ Here are two example Result-Summary pairs
 Result 1:
 {EXAMPLES[2]["input"]}
 Summary 1:
-{EXAMPLES[2]["output"]}
+{EXAMPLES[2]["expected_output"]}
 
 Result 2:
 {EXAMPLES[3]["input"]}
 Summary 2:
-{EXAMPLES[3]["output"]}
+{EXAMPLES[3]["expected_output"]}
 
 Here is the penetration test result to summarize:
-{ai_input}"""
-        }
-    ]
+{ai_input}"""}]}]
 
     # Tokenize input using Gemma-3 template
     inputs = tokenizer.apply_chat_template(
@@ -84,20 +89,21 @@ Here is the penetration test result to summarize:
         inputs[k] = inputs[k].to(device)
 
     # Generate model output
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=128,
-            do_sample=True,
-            temperature=1.0,
-            top_p=0.95,
-            top_k=64,
-            repetition_penalty=1.2,
-            use_cache=True
-        )
+    generated_ids = model.generate(
+        **inputs.to("cuda"),
+        max_new_tokens=128,
+        temperature=1.0,
+        top_p=0.95,
+        top_k=64,
+    )
 
-    # Decode the output
-    decoded_output = tokenizer.batch_decode(output_ids, skip_special_tokens=False)[0]
+    prompt_len = inputs["input_ids"].shape[-1]
+    new_tokens = generated_ids[0, prompt_len:]
+
+    decoded_output = tokenizer.decode(
+        new_tokens,
+        skip_special_tokens=True,
+    )
 
     # Extract only the assistant/model content
     # Gemma-3 format: <start_of_turn>model\nCONTENT<end_of_turn>
