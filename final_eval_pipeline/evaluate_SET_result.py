@@ -145,7 +145,7 @@ def add_notes(report: dict, summary: List[Dict], text: str) -> str:
     # Stochasticity / Run count
     if low_run_sets:
         note_lines.append(
-            f"- The following SETs had fewer than 100 runs and results may vary due to AI stochasticity: "
+            "- The following SETs had fewer than 100 runs and their results may vary due to AI stochasticity: "
             + ", ".join(low_run_sets) + "."
         )
         note_lines.append("- It is recommended to conduct a larger number of runs for a more comprehensive assessment.")
@@ -219,6 +219,6 @@ def run_evaluation_pipeline(json_report_path: str, output_html_dir: str) -> None
     print(f"[INFO] Generated report: {output_file}")
 
 run_evaluation_pipeline(
-    "data/generated_runs/00a1835b-0db8-4fdf-99d9-ef940d20805d.generated.json",
+    "data/generated_runs/fbad4102-2f0e-407a-ba8e-9d3d4dffe1ab.generated.json",
     "data/html_outputs/"
 )

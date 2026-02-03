@@ -14,5 +14,11 @@ data/generated_runs_old
 models/
 nraesalmi/
 wsl_venv/
-data/html_outputs/
 final_eval_pipeline/__pycache__
+
+data/html_outputs/*
+
+!data/html_outputs/0a08edb2-32b7-4f24-89c7-7c257cbc96a7.generated_report.html
+!data/html_outputs/00a42eaa-3d56-4211-a43e-87a45917aafd.generated_report.html
+!data/html_outputs/00a1835b-0db8-4fdf-99d9-ef940d20805d.generated_report.html
+!data/html_outputs/fbad4102-2f0e-407a-ba8e-9d3d4dffe1ab.generated_report.html
